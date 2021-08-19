@@ -13,3 +13,12 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Mac hidden files
+*.DS_Store
+
+# IDE specific files and directories
+.idea/
+
+# ignore builds directory
+builds/
