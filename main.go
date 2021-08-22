@@ -1,38 +1,51 @@
 package main
 
 import (
+	"bytes"
+	"deluge-selector/entity"
 	"fmt"
 	human "github.com/dustin/go-humanize"
 	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/cliveyg/deluge-selector/entity"
 	"io/ioutil"
+	"log"
 	"os"
+	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
 
-
+const SOURCE_SAMPLE = "SAMPLES/DRUMS/Kick/808 Kick.wav"
+const DEST_SAMPLE = "SAMPLES/DRUMS/Kick/808 Kick.wav"
 
 func main() {
 
 	allPars, err := getPartitionInfo()
 	if err != nil {
-		println(fmt.Errorf("we has a bad ting %s", err))
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	err = findDelugeCards(allPars)
 	if err != nil {
-		println(fmt.Errorf("we has a bad ting %s", err))
+		log.Fatal(err)
 	}
 
 	displayPartitionInfo(allPars)
 
+	for _, pt := range allPars {
+		if pt.DelugeCard {
+			err := walkDelugeCard(pt.Mountpoint)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+
 }
 
-func getPartitionInfo() ([]*PartitionInfo, error) {
+func getPartitionInfo() ([]*entity.PartitionInfo, error) {
 
-	var pia []*PartitionInfo
+	var pia []*entity.PartitionInfo
 	parts, _ := disk.Partitions(true)
 	for _, p := range parts {
 		device := p.Mountpoint
@@ -62,14 +75,23 @@ func getPartitionInfo() ([]*PartitionInfo, error) {
 			vN = volName[len(volName)-1]
 		}
 
-		pi := NewPartInfo(s.Fstype, s.Total, s.Used, s.Free, percent, vN, p.Mountpoint, sysDisk, delugeCard, empty)
+		pi := entity.NewPartInfo(s.Fstype, s.Total, s.Used, s.Free, percent, vN, p.Mountpoint, sysDisk, delugeCard, empty)
 		pia = append(pia, pi)
 	}
 
 	return pia, nil
 }
 
-func displayPartitionInfo(allP []*PartitionInfo) {
+func moveFile(source, dest string, repSlice []*entity.FilePathReplacer) error {
+	err := os.Rename(source, dest)
+	if err != nil {
+		return err
+	}
+	repSlice = append(repSlice, entity.NewFilePathReplacer(source, dest))
+	return nil
+}
+
+func displayPartitionInfo(allP []*entity.PartitionInfo) {
 	formatter := "%-14s %7s %7s %7s %4s %20s %8s %6s %5s %s\n"
 	fmt.Printf(formatter, "Filesystem", "Size", "Used", "Avail", "Use%", "Volume Name", "SysDisk", "Deluge", "Empty", "Mounted on")
 
@@ -109,7 +131,77 @@ func displayPartitionInfo(allP []*PartitionInfo) {
 
 }
 
-func findDelugeCards(pia []*PartitionInfo) error {
+func traverseCB (path string, info os.FileInfo, err error) error {
+	if err != nil {
+		// ignore permissions related errors
+		if !strings.Contains(err.Error(), "operation not permitted") {
+			return err
+		}
+	}
+	if !info.IsDir() {
+		err = stringFindAndReplace(path)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func stringFindAndReplace(filepath string) error {
+	b, err := ioutil.ReadFile(filepath)
+	if err != nil {
+		return err
+	}
+
+	matched, err := regexp.Match(SOURCE_SAMPLE, b)
+	if err != nil {
+		return err
+	}
+	if matched {
+		println(fmt.Sprintf("File %s contains the string", filepath))
+		//output := bytes.Replace(b, []byte(SAMPLE), []byte(SAMPLE+"XXCZ"), -1)
+		output := bytes.Replace(b, []byte(SOURCE_SAMPLE), []byte(DEST_SAMPLE), -1)
+		if err = ioutil.WriteFile(filepath, output, 0666); err != nil {
+			return err
+		}
+		println("...Replaced")
+	}
+	return nil
+}
+
+//func findString(path string) error {
+//	f, err := os.Open(path)
+//	if err != nil {
+//		return err
+//	}
+//	defer f.Close()
+//
+//	scanner := bufio.NewScanner(f)
+//
+//	// https://golang.org/pkg/bufio/#Scanner.Scan
+//	for scanner.Scan() {
+//		if strings.Contains(scanner.Text(), SAMPLE) {
+//			println(fmt.Sprintf("File %s contains the string", path))
+//		}
+//	}
+//
+//	return nil
+//}
+
+
+func walkDelugeCard(path string) error {
+	//var wg sync.WaitGroup
+	err := filepath.Walk(path, traverseCB)
+	if err != nil {
+		println("BAD JUJU")
+		return err
+	}
+
+	return nil
+}
+
+func findDelugeCards(pia []*entity.PartitionInfo) error {
 
 	for _, pi := range pia {
 		if pi.SysDisk {
